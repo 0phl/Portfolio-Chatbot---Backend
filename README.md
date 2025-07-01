@@ -1,10 +1,10 @@
 # Portfolio Chatbot API
 
-A RAG (Retrieval-Augmented Generation) powered chatbot API for portfolio websites using Google Gemini LLM and Pinecone vector database.
+A RAG (Retrieval-Augmented Generation) powered chatbot API for portfolio websites using Google Gemini LLM, Pinecone vector database, and the LangChain framework.
 
 ## Features
 
-- 🤖 Intelligent chatbot responses using RAG architecture
+- 🤖 Intelligent chatbot responses using RAG architecture and LangChain
 - 🔍 Semantic search through portfolio content
 - 📚 Vector database for efficient content retrieval
 - 🚀 Fast and scalable Express.js API
