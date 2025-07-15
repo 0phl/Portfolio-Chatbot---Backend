@@ -9,9 +9,9 @@ import { Request, Response, NextFunction } from 'express';
 // Security configuration
 export const securityConfig: SecurityConfig = {
   maxMessageLength: parseInt(process.env.MAX_MESSAGE_LENGTH || '1000'),
-  maxRequestsPerMinute: parseInt(process.env.MAX_REQUESTS_PER_MINUTE || '10'),
-  maxRequestsPerHour: parseInt(process.env.MAX_REQUESTS_PER_HOUR || '100'),
-  slowDownThreshold: parseInt(process.env.SLOW_DOWN_THRESHOLD || '5'),
+  maxRequestsPerMinute: parseInt(process.env.MAX_REQUESTS_PER_MINUTE || '20'), // Increased from 10
+  maxRequestsPerHour: parseInt(process.env.MAX_REQUESTS_PER_HOUR || '200'), // Increased from 100
+  slowDownThreshold: parseInt(process.env.SLOW_DOWN_THRESHOLD || '10'), // Increased from 5
   allowedOrigins: process.env.ALLOWED_ORIGINS?.split(',') || [
     process.env.FRONTEND_URL || 'http://localhost:3000',
     'http://localhost:3000',
@@ -82,6 +82,9 @@ export function logSecurityEvent(event: SecurityEvent): void {
   });
 }
 
+// Track logged IPs to prevent spam
+const loggedRateLimitIPs = new Map<string, number>();
+
 // Rate limiting middleware
 export const createRateLimiter = (windowMs: number, max: number, message: string) => {
   return rateLimit({
@@ -96,15 +99,27 @@ export const createRateLimiter = (windowMs: number, max: number, message: string
     },
     handler: (req: Request, res: Response) => {
       const clientIP = req.ip || req.socket.remoteAddress || 'unknown';
-      logSecurityEvent({
-        type: 'rate_limit',
-        ip: clientIP,
-        userAgent: req.get('User-Agent'),
-        message: `Rate limit exceeded: ${max} requests per ${windowMs}ms`,
-        timestamp: new Date(),
-        severity: 'medium'
-      });
-      console.log(`🚦 Rate limit exceeded for IP: ${clientIP}`);
+      const now = Date.now();
+      const lastLogged = loggedRateLimitIPs.get(clientIP) || 0;
+
+      // Only log once per 5 minutes per IP to prevent spam
+      if (now - lastLogged > 300000) { // 5 minutes = 300000ms
+        // Only log to file, not console in production
+        logSecurityEvent({
+          type: 'rate_limit',
+          ip: clientIP,
+          userAgent: req.get('User-Agent'),
+          message: `Rate limit exceeded: ${max} requests per ${windowMs}ms (further logs suppressed for 5min)`,
+          timestamp: new Date(),
+          severity: 'medium'
+        });
+
+        loggedRateLimitIPs.set(clientIP, now);
+      }
+
+      // Never log to console in production to prevent spam
+
+      // Always send the response, but don't spam logs
       res.status(429).json({ error: message });
     },
     skip: (req: Request) => {
@@ -259,7 +274,7 @@ export const corsOptions = {
   maxAge: 86400 // 24 hours
 };
 
-// Request logging middleware
+// Request logging middleware (reduced logging)
 export const requestLogger = (req: Request, res: Response, next: NextFunction): void => {
   const start = Date.now();
 
@@ -275,11 +290,14 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction): 
       timestamp: new Date()
     };
 
+    // Only log errors and important events to reduce spam
     if (res.statusCode >= 400) {
       securityLogger.warn('HTTP Error', logData);
-    } else {
-      securityLogger.info('HTTP Request', logData);
+    } else if (req.url.includes('/api/chat') && process.env.NODE_ENV === 'development') {
+      // Only log chat requests in development
+      securityLogger.info('Chat Request', logData);
     }
+    // Skip logging successful health checks and other routine requests
   });
 
   next();
@@ -351,5 +369,18 @@ export const cleanupSuspiciousIPs = () => {
   }
 };
 
+// Cleanup old rate limit logs
+export const cleanupRateLimitLogs = () => {
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  for (const [ip, timestamp] of loggedRateLimitIPs.entries()) {
+    if (timestamp < oneHourAgo) {
+      loggedRateLimitIPs.delete(ip);
+    }
+  }
+};
+
 // Run cleanup every hour
-setInterval(cleanupSuspiciousIPs, 60 * 60 * 1000);
+setInterval(() => {
+  cleanupSuspiciousIPs();
+  cleanupRateLimitLogs();
+}, 60 * 60 * 1000);

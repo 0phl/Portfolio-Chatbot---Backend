@@ -31,9 +31,9 @@ app.use(ipProtection);
 // CORS with enhanced security
 app.use(cors(corsOptions));
 
-// Rate limiting and slow down
-app.use(apiRateLimiter);
-app.use(slowDownMiddleware);
+// Rate limiting and slow down (TEMPORARILY DISABLED)
+// app.use(apiRateLimiter);
+// app.use(slowDownMiddleware);
 
 // Body parsing with size limits
 app.use(express.json({
@@ -67,8 +67,8 @@ app.get('/health', (_req: any, res: any) => {
   });
 });
 
-// Apply chat-specific middleware
-app.use('/api/chat', chatRateLimiter);
+// Apply chat-specific middleware (TEMPORARILY DISABLED)
+// app.use('/api/chat', chatRateLimiter);
 
 // Custom validation function for chat
 const validateAndSanitizeChat = (req: any, res: any, next: any) => {
