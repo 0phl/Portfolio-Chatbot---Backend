@@ -15,7 +15,9 @@ import {
   markIPSuspicious,
   securityLogger,
   securityConfig,
-  logSecurityEvent
+  logSecurityEvent,
+  perMessageRateLimiter,
+  securityControls
 } from './security';
 
 // Load environment variables
@@ -31,9 +33,9 @@ app.use(ipProtection);
 // CORS with enhanced security
 app.use(cors(corsOptions));
 
-// Rate limiting and slow down (TEMPORARILY DISABLED)
-// app.use(apiRateLimiter);
-// app.use(slowDownMiddleware);
+// Smart rate limiting (re-enabled with better logic)
+app.use(apiRateLimiter);
+app.use(slowDownMiddleware);
 
 // Body parsing with size limits
 app.use(express.json({
@@ -67,8 +69,8 @@ app.get('/health', (_req: any, res: any) => {
   });
 });
 
-// Apply chat-specific middleware (TEMPORARILY DISABLED)
-// app.use('/api/chat', chatRateLimiter);
+// Apply smart chat-specific middleware (re-enabled)
+app.use('/api/chat', chatRateLimiter);
 
 // Custom validation function for chat
 const validateAndSanitizeChat = (req: any, res: any, next: any) => {
@@ -97,24 +99,26 @@ const validateAndSanitizeChat = (req: any, res: any, next: any) => {
     });
   }
 
-  // Check for suspicious patterns
-  const suspiciousPattern = securityConfig.suspiciousPatterns.find(pattern =>
-    pattern.test(message)
-  );
+  // Check for suspicious patterns (if enabled)
+  if (securityControls.enableSuspiciousPatternDetection) {
+    const suspiciousPattern = securityConfig.suspiciousPatterns.find(pattern =>
+      pattern.test(message)
+    );
 
-  if (suspiciousPattern) {
-    logSecurityEvent({
-      type: 'suspicious_input',
-      ip: req.ip || 'unknown',
-      userAgent: req.get('User-Agent'),
-      message: `Suspicious pattern detected: ${message.substring(0, 100)}...`,
-      timestamp: new Date(),
-      severity: 'high'
-    });
+    if (suspiciousPattern) {
+      logSecurityEvent({
+        type: 'suspicious_input',
+        ip: req.ip || 'unknown',
+        userAgent: req.get('User-Agent'),
+        message: `Suspicious pattern detected: ${message.substring(0, 100)}...`,
+        timestamp: new Date(),
+        severity: 'high'
+      });
 
-    return res.status(400).json({
-      error: 'Your message contains content that cannot be processed. Please rephrase your question.'
-    });
+      return res.status(400).json({
+        error: 'Your message contains content that cannot be processed. Please rephrase your question.'
+      });
+    }
   }
 
   // Sanitize input
@@ -127,7 +131,7 @@ const validateAndSanitizeChat = (req: any, res: any, next: any) => {
 };
 
 // Chat endpoint with enhanced security
-app.post('/api/chat', validateAndSanitizeChat, async (req: any, res: any) => {
+app.post('/api/chat', validateAndSanitizeChat, perMessageRateLimiter, async (req: any, res: any) => {
     try {
       const { message } = req.body;
       const clientIP = req.ip || 'unknown';

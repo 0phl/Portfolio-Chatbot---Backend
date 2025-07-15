@@ -9,9 +9,9 @@ import { Request, Response, NextFunction } from 'express';
 // Security configuration
 export const securityConfig: SecurityConfig = {
   maxMessageLength: parseInt(process.env.MAX_MESSAGE_LENGTH || '1000'),
-  maxRequestsPerMinute: parseInt(process.env.MAX_REQUESTS_PER_MINUTE || '20'), // Increased from 10
-  maxRequestsPerHour: parseInt(process.env.MAX_REQUESTS_PER_HOUR || '200'), // Increased from 100
-  slowDownThreshold: parseInt(process.env.SLOW_DOWN_THRESHOLD || '10'), // Increased from 5
+  maxRequestsPerMinute: parseInt(process.env.MAX_REQUESTS_PER_MINUTE || '50'), // Much higher for shared IPs
+  maxRequestsPerHour: parseInt(process.env.MAX_REQUESTS_PER_HOUR || '500'), // Much higher for shared IPs
+  slowDownThreshold: parseInt(process.env.SLOW_DOWN_THRESHOLD || '20'), // Higher threshold
   allowedOrigins: process.env.ALLOWED_ORIGINS?.split(',') || [
     process.env.FRONTEND_URL || 'http://localhost:3000',
     'http://localhost:3000',
@@ -52,6 +52,13 @@ export const securityConfig: SecurityConfig = {
   ]
 };
 
+// Optional security controls
+export const securityControls = {
+  enableIPBlocking: process.env.ENABLE_IP_BLOCKING === 'true',
+  enableSuspiciousPatternDetection: process.env.ENABLE_SUSPICIOUS_PATTERN_DETECTION !== 'false', // Default true
+  logLevel: process.env.LOG_LEVEL || 'info'
+};
+
 // Security logger
 export const securityLogger = winston.createLogger({
   level: 'info',
@@ -85,17 +92,22 @@ export function logSecurityEvent(event: SecurityEvent): void {
 // Track logged IPs to prevent spam
 const loggedRateLimitIPs = new Map<string, number>();
 
-// Rate limiting middleware
-export const createRateLimiter = (windowMs: number, max: number, message: string) => {
+// Smart rate limiting that considers multiple factors
+export const createSmartRateLimiter = (windowMs: number, max: number, message: string) => {
   return rateLimit({
     windowMs,
-    max,
+    max: max * 3, // Allow 3x more requests per IP to account for shared networks
     message: { error: message },
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req: Request) => {
-      // Use IP address as key, with fallback
-      return req.ip || req.socket.remoteAddress || 'unknown';
+      // Use IP + User-Agent combination for better granularity
+      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      const userAgent = req.get('User-Agent') || 'unknown';
+
+      // Create a hash of IP + partial User-Agent to allow multiple users per IP
+      const userHash = userAgent.substring(0, 50); // First 50 chars of user agent
+      return `${ip}:${userHash}`;
     },
     handler: (req: Request, res: Response) => {
       const clientIP = req.ip || req.socket.remoteAddress || 'unknown';
@@ -129,28 +141,69 @@ export const createRateLimiter = (windowMs: number, max: number, message: string
   });
 };
 
-// Chat endpoint rate limiter (stricter)
-export const chatRateLimiter = createRateLimiter(
+// Chat endpoint rate limiter (smarter)
+export const chatRateLimiter = createSmartRateLimiter(
   60 * 1000, // 1 minute
   securityConfig.maxRequestsPerMinute,
   'Too many chat requests. Please wait a moment before trying again.'
 );
 
-// General API rate limiter
-export const apiRateLimiter = createRateLimiter(
+// General API rate limiter (smarter)
+export const apiRateLimiter = createSmartRateLimiter(
   60 * 60 * 1000, // 1 hour
   securityConfig.maxRequestsPerHour,
   'Too many API requests. Please try again later.'
 );
 
-// Slow down middleware for progressive delays
+// Slow down middleware for progressive delays (smarter)
 export const slowDownMiddleware = slowDown({
   windowMs: 60 * 1000, // 1 minute
   delayAfter: securityConfig.slowDownThreshold,
-  delayMs: (hits) => hits * 500, // Increase delay by 500ms for each request
-  maxDelayMs: 10000, // Maximum delay of 10 seconds
-  skip: (req: Request) => req.path === '/health'
+  delayMs: (hits) => Math.min(hits * 200, 2000), // Max 2 second delay
+  maxDelayMs: 2000, // Maximum delay of 2 seconds (reduced)
+  skip: (req: Request) => req.path === '/health',
+  keyGenerator: (req: Request) => {
+    // Same smart key generation as rate limiter
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const userAgent = req.get('User-Agent') || 'unknown';
+    const userHash = userAgent.substring(0, 50);
+    return `${ip}:${userHash}`;
+  }
 });
+
+// Per-message rate limiter for chat (prevents spam of same content)
+const messageHashes = new Map<string, { count: number, lastSeen: number }>();
+
+export const perMessageRateLimiter = (req: Request, res: Response, next: NextFunction): void => {
+  const { message } = req.body;
+  if (!message) return next();
+
+  // Create hash of message content
+  const messageHash = message.toLowerCase().trim().substring(0, 100);
+  const now = Date.now();
+  const existing = messageHashes.get(messageHash);
+
+  if (existing) {
+    // If same message sent within 30 seconds, block it
+    if (now - existing.lastSeen < 30000) {
+      existing.count++;
+      if (existing.count > 3) {
+        res.status(429).json({
+          error: 'Please wait before sending the same message again.'
+        });
+        return;
+      }
+    } else {
+      // Reset count if enough time has passed
+      existing.count = 1;
+    }
+    existing.lastSeen = now;
+  } else {
+    messageHashes.set(messageHash, { count: 1, lastSeen: now });
+  }
+
+  next();
+};
 
 // Input validation middleware
 export const validateChatInput = [
@@ -310,6 +363,11 @@ const suspiciousIPs = new Map<string, { count: number, lastSeen: Date }>();
 export const ipProtection = (req: Request, res: Response, next: NextFunction): void => {
   const clientIP = req.ip || 'unknown';
 
+  // Skip IP protection if disabled
+  if (!securityControls.enableIPBlocking) {
+    return next();
+  }
+
   // Check if IP is blocked
   if (blockedIPs.has(clientIP)) {
     logSecurityEvent({
@@ -379,8 +437,19 @@ export const cleanupRateLimitLogs = () => {
   }
 };
 
+// Cleanup old message hashes
+export const cleanupMessageHashes = () => {
+  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+  for (const [hash, data] of messageHashes.entries()) {
+    if (data.lastSeen < fiveMinutesAgo) {
+      messageHashes.delete(hash);
+    }
+  }
+};
+
 // Run cleanup every hour
 setInterval(() => {
   cleanupSuspiciousIPs();
   cleanupRateLimitLogs();
+  cleanupMessageHashes();
 }, 60 * 60 * 1000);

@@ -25,25 +25,33 @@ This document outlines the comprehensive security measures implemented in the Po
 MAX_MESSAGE_LENGTH=1000
 ```
 
-### 2. Rate Limiting & DoS Protection
+### 2. Smart Rate Limiting & DoS Protection
 
 **Protection Against:**
 - Denial of Service (DoS) attacks
 - API abuse and quota exhaustion
 - Brute force attacks
 - Resource exhaustion
+- **Shared IP conflicts** (offices, schools, public WiFi)
 
-**Implementation:**
-- **Chat Endpoint**: 10 requests per minute per IP
-- **General API**: 100 requests per hour per IP
-- Progressive slow-down after threshold
-- Automatic IP blocking for repeated violations
+**Smart Implementation:**
+- **Multi-factor key generation**: IP + User-Agent combination
+- **Shared IP friendly**: 3x higher limits to account for multiple users per IP
+- **Per-message limiting**: Prevents spam of identical content
+- **Progressive slow-down**: Gradual delays instead of hard blocks
+- **Minimal logging**: Prevents log spam and performance issues
+
+**Current Limits:**
+- **Chat Endpoint**: 50 requests per minute per IP+UserAgent combination
+- **General API**: 500 requests per hour per IP+UserAgent combination
+- **Message Spam**: Max 3 identical messages per 30 seconds
+- **Progressive Delays**: Start after 20 requests, max 2 second delay
 
 **Configuration:**
 ```env
-MAX_REQUESTS_PER_MINUTE=10
-MAX_REQUESTS_PER_HOUR=100
-SLOW_DOWN_THRESHOLD=5
+MAX_REQUESTS_PER_MINUTE=50
+MAX_REQUESTS_PER_HOUR=500
+SLOW_DOWN_THRESHOLD=20
 ```
 
 ### 3. Enhanced CORS Security
