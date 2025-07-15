@@ -2,19 +2,50 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { LangChainRAGService } from './rag-langchain';
+import {
+  securityHeaders,
+  corsOptions,
+  chatRateLimiter,
+  apiRateLimiter,
+  slowDownMiddleware,
+  validateChatInput,
+  sanitizeAndDetectSuspicious,
+  requestLogger,
+  ipProtection,
+  markIPSuspicious,
+  securityLogger,
+  securityConfig,
+  logSecurityEvent
+} from './security';
 
 // Load environment variables
 dotenv.config();
 
 const app = express();
 
-// Middleware
-app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
-  credentials: true,
+// Security middleware (applied first)
+app.use(securityHeaders);
+app.use(requestLogger);
+app.use(ipProtection);
+
+// CORS with enhanced security
+app.use(cors(corsOptions));
+
+// Rate limiting and slow down
+app.use(apiRateLimiter);
+app.use(slowDownMiddleware);
+
+// Body parsing with size limits
+app.use(express.json({
+  limit: '1mb', // Reduced from 10mb for security
+  verify: (req: any, res: any, buf: Buffer) => {
+    // Additional verification can be added here
+    if (buf.length > 1024 * 1024) { // 1MB limit
+      throw new Error('Request entity too large');
+    }
+  }
 }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Initialize RAG service
 let ragService: LangChainRAGService;
@@ -27,135 +58,313 @@ try {
   process.exit(1);
 }
 
-// Health check endpoint
-app.get('/health', (req: any, res: any) => {
-  res.json({ 
-    status: 'healthy', 
+// Health check endpoint - exempt from rate limiting
+app.get('/health', (_req: any, res: any) => {
+  res.json({
+    status: 'healthy',
     timestamp: new Date().toISOString(),
     service: 'portfolio-chatbot-api'
   });
 });
 
-// Chat endpoint
-app.post('/api/chat', async (req: any, res: any) => {
-  try {
-    const { message } = req.body;
+// Apply chat-specific middleware
+app.use('/api/chat', chatRateLimiter);
 
-    if (!message || typeof message !== 'string' || message.trim().length === 0) {
-      return res.status(400).json({ 
-        error: 'Message is required and must be a non-empty string' 
-      });
-    }
+// Custom validation function for chat
+const validateAndSanitizeChat = (req: any, res: any, next: any) => {
+  // Validate message
+  const { message } = req.body;
 
-    if (message.length > 1000) {
-      return res.status(400).json({ 
-        error: 'Message is too long. Please keep it under 1000 characters.' 
-      });
-    }
-
-    console.log(`Received chat request: ${message.substring(0, 100)}...`);
-
-    const response = await ragService.query(message);
-    
-    console.log(`Generated response: ${response.substring(0, 100)}...`);
-    
-    res.json({ response });
-  } catch (error) {
-    console.error('❌ ERROR in chat endpoint:');
-    console.error('Error type:', error.constructor.name);
-    console.error('Error message:', error.message);
-    console.error('Full error:', error);
-    if (error.stack) {
-      console.error('Stack trace:', error.stack);
-    }
-    
-    res.status(500).json({
-      error: 'I apologize, but I encountered an error processing your request. Please try again.'
+  if (!message || typeof message !== 'string' || message.trim().length === 0) {
+    securityLogger.warn('Invalid input', {
+      ip: req.ip || 'unknown',
+      error: 'Empty or invalid message',
+      timestamp: new Date()
+    });
+    return res.status(400).json({
+      error: 'Message is required and must be a non-empty string'
     });
   }
-});
 
-// Add document endpoint (for seeding)
+  if (message.length > securityConfig.maxMessageLength) {
+    securityLogger.warn('Message too long', {
+      ip: req.ip || 'unknown',
+      messageLength: message.length,
+      timestamp: new Date()
+    });
+    return res.status(400).json({
+      error: `Message is too long. Please keep it under ${securityConfig.maxMessageLength} characters.`
+    });
+  }
+
+  // Check for suspicious patterns
+  const suspiciousPattern = securityConfig.suspiciousPatterns.find(pattern =>
+    pattern.test(message)
+  );
+
+  if (suspiciousPattern) {
+    logSecurityEvent({
+      type: 'suspicious_input',
+      ip: req.ip || 'unknown',
+      userAgent: req.get('User-Agent'),
+      message: `Suspicious pattern detected: ${message.substring(0, 100)}...`,
+      timestamp: new Date(),
+      severity: 'high'
+    });
+
+    return res.status(400).json({
+      error: 'Your message contains content that cannot be processed. Please rephrase your question.'
+    });
+  }
+
+  // Sanitize input
+  req.body.message = message
+    .replace(/\s+/g, ' ') // Normalize whitespace
+    .trim()
+    .substring(0, securityConfig.maxMessageLength); // Ensure length limit
+
+  next();
+};
+
+// Chat endpoint with enhanced security
+app.post('/api/chat', validateAndSanitizeChat, async (req: any, res: any) => {
+    try {
+      const { message } = req.body;
+      const clientIP = req.ip || 'unknown';
+
+      console.log(`Received chat request from ${clientIP}: ${message.substring(0, 100)}...`);
+
+      const response = await ragService.query(message);
+
+      console.log(`Generated response: ${response.substring(0, 100)}...`);
+
+      // Log successful interaction
+      securityLogger.info('Successful chat interaction', {
+        ip: clientIP,
+        messageLength: message.length,
+        responseLength: response.length,
+        timestamp: new Date()
+      });
+
+      res.json({ response });
+    } catch (error: any) {
+      const clientIP = req.ip || 'unknown';
+
+      console.error('❌ ERROR in chat endpoint:');
+      console.error('Error type:', error.constructor.name);
+      console.error('Error message:', error.message);
+      console.error('Full error:', error);
+      if (error.stack) {
+        console.error('Stack trace:', error.stack);
+      }
+
+      // Log error and mark IP as suspicious for repeated errors
+      securityLogger.error('Chat endpoint error', {
+        ip: clientIP,
+        error: error.message,
+        timestamp: new Date()
+      });
+
+      // Mark IP as suspicious if error seems intentional
+      if (error.message?.includes('quota') || error.message?.includes('rate')) {
+        markIPSuspicious(clientIP);
+      }
+
+      res.status(500).json({
+        error: 'I apologize, but I encountered an error processing your request. Please try again.'
+      });
+    }
+  }
+);
+
+// Add document endpoint (for seeding) - with security
 app.post('/api/add-document', async (req: any, res: any) => {
   try {
     const { text, category, title, source } = req.body;
+    const clientIP = req.ip || 'unknown';
 
+    // Enhanced validation
     if (!text || typeof text !== 'string') {
-      return res.status(400).json({ 
-        error: 'Text is required and must be a string' 
+      securityLogger.warn('Invalid document upload attempt', {
+        ip: clientIP,
+        error: 'Missing or invalid text field',
+        timestamp: new Date()
+      });
+      return res.status(400).json({
+        error: 'Text is required and must be a string'
+      });
+    }
+
+    if (text.length > 50000) { // 50KB limit for documents
+      securityLogger.warn('Document too large', {
+        ip: clientIP,
+        textLength: text.length,
+        timestamp: new Date()
+      });
+      return res.status(400).json({
+        error: 'Document text is too large. Maximum 50,000 characters allowed.'
       });
     }
 
     await ragService.addDocument(text, { text, category, title, source });
-    
-    res.json({ 
+
+    securityLogger.info('Document added successfully', {
+      ip: clientIP,
+      category,
+      title,
+      textLength: text.length,
+      timestamp: new Date()
+    });
+
+    res.json({
       message: 'Document added successfully',
       metadata: { category, title, source }
     });
-  } catch (error) {
+  } catch (error: any) {
+    const clientIP = req.ip || 'unknown';
+    securityLogger.error('Error adding document', {
+      ip: clientIP,
+      error: error.message,
+      timestamp: new Date()
+    });
     console.error('Error adding document:', error);
-    res.status(500).json({ 
-      error: 'Failed to add document' 
+    res.status(500).json({
+      error: 'Failed to add document'
     });
   }
 });
 
-// Add multiple documents endpoint
+// Add multiple documents endpoint - with security
 app.post('/api/add-documents', async (req: any, res: any) => {
   try {
     const { documents } = req.body;
+    const clientIP = req.ip || 'unknown';
 
     if (!Array.isArray(documents) || documents.length === 0) {
-      return res.status(400).json({ 
-        error: 'Documents array is required and must not be empty' 
+      securityLogger.warn('Invalid bulk document upload', {
+        ip: clientIP,
+        error: 'Invalid documents array',
+        timestamp: new Date()
+      });
+      return res.status(400).json({
+        error: 'Documents array is required and must not be empty'
+      });
+    }
+
+    if (documents.length > 100) { // Limit bulk uploads
+      securityLogger.warn('Bulk upload too large', {
+        ip: clientIP,
+        documentCount: documents.length,
+        timestamp: new Date()
+      });
+      return res.status(400).json({
+        error: 'Too many documents. Maximum 100 documents per batch.'
       });
     }
 
     await ragService.addMultipleDocuments(documents);
-    
-    res.json({ 
-      message: `${documents.length} documents added successfully` 
+
+    securityLogger.info('Bulk documents added', {
+      ip: clientIP,
+      documentCount: documents.length,
+      timestamp: new Date()
     });
-  } catch (error) {
+
+    res.json({
+      message: `${documents.length} documents added successfully`
+    });
+  } catch (error: any) {
+    const clientIP = req.ip || 'unknown';
+    securityLogger.error('Error adding bulk documents', {
+      ip: clientIP,
+      error: error.message,
+      timestamp: new Date()
+    });
     console.error('Error adding documents:', error);
-    res.status(500).json({ 
-      error: 'Failed to add documents' 
+    res.status(500).json({
+      error: 'Failed to add documents'
     });
   }
 });
 
-// Search endpoint (for testing)
+// Search endpoint (for testing) - with security
 app.post('/api/search', async (req: any, res: any) => {
   try {
     const { query, topK = 5 } = req.body;
+    const clientIP = req.ip || 'unknown';
 
     if (!query || typeof query !== 'string') {
-      return res.status(400).json({ 
-        error: 'Query is required and must be a string' 
+      securityLogger.warn('Invalid search query', {
+        ip: clientIP,
+        error: 'Missing or invalid query',
+        timestamp: new Date()
+      });
+      return res.status(400).json({
+        error: 'Query is required and must be a string'
+      });
+    }
+
+    if (query.length > 500) { // Limit search query length
+      securityLogger.warn('Search query too long', {
+        ip: clientIP,
+        queryLength: query.length,
+        timestamp: new Date()
+      });
+      return res.status(400).json({
+        error: 'Search query is too long. Maximum 500 characters allowed.'
+      });
+    }
+
+    if (topK > 20) { // Limit number of results
+      return res.status(400).json({
+        error: 'Maximum 20 results allowed per search.'
       });
     }
 
     const results = await ragService.searchSimilar(query, topK);
-    
+
+    securityLogger.info('Search performed', {
+      ip: clientIP,
+      queryLength: query.length,
+      resultsCount: results.length,
+      timestamp: new Date()
+    });
+
     res.json({ results });
-  } catch (error) {
+  } catch (error: any) {
+    const clientIP = req.ip || 'unknown';
+    securityLogger.error('Search endpoint error', {
+      ip: clientIP,
+      error: error.message,
+      timestamp: new Date()
+    });
     console.error('Error in search endpoint:', error);
-    res.status(500).json({ 
-      error: 'Failed to search documents' 
+    res.status(500).json({
+      error: 'Failed to search documents'
     });
   }
 });
 
 // Error handling middleware
-app.use((err: any, req: any, res: any, next: any) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ 
-    error: 'Internal server error' 
+app.use((err: any, _req: any, res: any, _next: any) => {
+  const errorId = Math.random().toString(36).substring(2, 11);
+
+  securityLogger.error('Unhandled application error', {
+    errorId,
+    error: err.message,
+    stack: err.stack,
+    timestamp: new Date()
+  });
+
+  console.error(`Unhandled error [${errorId}]:`, err);
+  res.status(500).json({
+    error: 'Internal server error',
+    errorId // Include error ID for tracking
   });
 });
 
 // 404 handler
-app.use((req: any, res: any) => {
+app.use((_req: any, res: any) => {
   res.status(404).json({
     error: 'Endpoint not found'
   });

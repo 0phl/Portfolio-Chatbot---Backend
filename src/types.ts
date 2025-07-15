@@ -35,3 +35,21 @@ export interface PDFProcessingOptions {
   preservePageBreaks?: boolean;
   includeMetadata?: boolean;
 }
+
+export interface SecurityConfig {
+  maxMessageLength: number;
+  maxRequestsPerMinute: number;
+  maxRequestsPerHour: number;
+  slowDownThreshold: number;
+  allowedOrigins: string[];
+  suspiciousPatterns: RegExp[];
+}
+
+export interface SecurityEvent {
+  type: 'rate_limit' | 'suspicious_input' | 'blocked_request' | 'validation_error';
+  ip: string;
+  userAgent?: string;
+  message?: string;
+  timestamp: Date;
+  severity: 'low' | 'medium' | 'high';
+}

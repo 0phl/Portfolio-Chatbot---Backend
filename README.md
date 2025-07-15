@@ -8,7 +8,12 @@ A RAG (Retrieval-Augmented Generation) powered chatbot API for portfolio website
 - 🔍 Semantic search through portfolio content
 - 📚 Vector database for efficient content retrieval
 - 🚀 Fast and scalable Express.js API
-- 🔒 Secure environment variable management
+- 🔒 **Comprehensive Security Suite**
+  - 🛡️ Input validation and sanitization
+  - 🚦 Rate limiting and DoS protection
+  - 🌐 Enhanced CORS security
+  - 📊 Security monitoring and logging
+  - 🚫 Automatic IP blocking for malicious behavior
 - 📊 Built-in testing and seeding capabilities
 - 📄 PDF document processing and indexing
 - 🔧 Flexible content chunking strategies
@@ -54,6 +59,12 @@ NODE_ENV=development
 
 # Frontend URL for CORS
 FRONTEND_URL=http://localhost:3000
+
+# Security Configuration (Optional)
+MAX_MESSAGE_LENGTH=1000
+MAX_REQUESTS_PER_MINUTE=10
+MAX_REQUESTS_PER_HOUR=100
+ALLOWED_ORIGINS=http://localhost:3000,https://yourdomain.com
 ```
 
 ### 3. Set Up Pinecone Vector Database
@@ -115,6 +126,15 @@ npm run dev
 ```bash
 npm run build
 npm start
+```
+
+## Security Testing
+
+Test the security features of your API:
+
+```bash
+# Run comprehensive security tests
+npm run test:security
 ```
 
 ## API Endpoints
@@ -239,14 +259,27 @@ To add your own portfolio content:
 - Review and optimize prompts for better responses
 - Monitor error logs and performance metrics
 
+## Security
+
+This API includes comprehensive security measures:
+
+- **Input Validation**: Prevents prompt injection, XSS, and malicious inputs
+- **Rate Limiting**: Protects against DoS attacks and API abuse
+- **CORS Protection**: Restricts access to authorized domains only
+- **Security Monitoring**: Logs and tracks suspicious activities
+- **IP Blocking**: Automatically blocks malicious IP addresses
+
+For detailed security information, see [SECURITY.md](./SECURITY.md).
+
 ## Troubleshooting
 
 ### Common Issues
 
 1. **API Key Errors**: Verify all environment variables are set correctly
 2. **Pinecone Connection**: Check index name and API key
-3. **Rate Limiting**: Implement delays between requests if needed
-4. **CORS Issues**: Update `FRONTEND_URL` in environment variables
+3. **Rate Limiting**: Adjust limits in environment variables if needed
+4. **CORS Issues**: Update `ALLOWED_ORIGINS` in environment variables
+5. **Security Blocks**: Check `logs/security-combined.log` for blocked requests
 
 ### Debug Mode
 
