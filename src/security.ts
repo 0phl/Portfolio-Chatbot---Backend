@@ -20,13 +20,17 @@ export const securityConfig: SecurityConfig = {
     'https://localhost:3001'
   ],
   suspiciousPatterns: [
-    // Prompt injection patterns
-    /ignore\s+(previous|above|all)\s+(instructions?|prompts?|rules?)/i,
-    /forget\s+(everything|all|previous)/i,
+    // Prompt injection patterns (enhanced)
+    /ignore\s+(previous|above|all|prior)\s+(instructions?|prompts?|rules?|commands?)/i,
+    /forget\s+(everything|all|previous|prior)/i,
     /you\s+are\s+now\s+a?\s*(different|new)/i,
     /system\s*:\s*/i,
     /assistant\s*:\s*/i,
     /human\s*:\s*/i,
+    /tell\s+me\s+(your|the)\s+system\s+prompt/i,
+    /what\s+(is|are)\s+(your|the)\s+(system\s+)?(prompt|instructions)/i,
+    /override\s+(previous|all)\s+(instructions?|commands?)/i,
+    /disregard\s+(previous|all|above)/i,
     /<\s*script\s*>/i,
     /javascript\s*:/i,
     /data\s*:\s*text\/html/i,
@@ -86,15 +90,21 @@ export const createRateLimiter = (windowMs: number, max: number, message: string
     message: { error: message },
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: (req: Request) => {
+      // Use IP address as key, with fallback
+      return req.ip || req.socket.remoteAddress || 'unknown';
+    },
     handler: (req: Request, res: Response) => {
+      const clientIP = req.ip || req.socket.remoteAddress || 'unknown';
       logSecurityEvent({
         type: 'rate_limit',
-        ip: req.ip || 'unknown',
+        ip: clientIP,
         userAgent: req.get('User-Agent'),
         message: `Rate limit exceeded: ${max} requests per ${windowMs}ms`,
         timestamp: new Date(),
         severity: 'medium'
       });
+      console.log(`🚦 Rate limit exceeded for IP: ${clientIP}`);
       res.status(429).json({ error: message });
     },
     skip: (req: Request) => {

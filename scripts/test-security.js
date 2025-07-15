@@ -76,7 +76,7 @@ async function testSecurity() {
       const response = await axios.post(`${API_BASE}/api/chat`, {
         message: testCase.message
       }, {
-        timeout: 5000,
+        timeout: 15000, // Increased timeout for AI responses
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'Security-Test-Script/1.0'
@@ -141,7 +141,8 @@ async function testRateLimit() {
       }).catch(error => ({
         error: true,
         status: error.response?.status,
-        message: error.response?.data?.error
+        message: error.response?.data?.error || error.message,
+        code: error.code
       }))
     );
   }
@@ -159,7 +160,7 @@ async function testRateLimit() {
       console.log(`Request ${index + 1}: ✅ Successful`);
       successful++;
     } else {
-      console.log(`Request ${index + 1}: ❓ Other error (${result.status})`);
+      console.log(`Request ${index + 1}: ❓ Other error (${result.status || result.code}) - ${result.message}`);
     }
   });
 
