@@ -21,35 +21,82 @@ export const securityConfig: SecurityConfig = {
     'https://localhost:3001'
   ],
   suspiciousPatterns: [
-    // Prompt injection patterns (enhanced)
-    /ignore\s+(previous|above|all|prior)\s+(instructions?|prompts?|rules?|commands?)/i,
-    /forget\s+(everything|all|previous|prior)/i,
-    /you\s+are\s+now\s+a?\s*(different|new)/i,
+    // Enhanced prompt injection patterns (more flexible)
+    /ignore\s+\w*\s*(previous|above|all|prior|earlier)\s+\w*\s*(instructions?|prompts?|rules?|commands?)/i,
+    /forget\s+\w*\s*(everything|all|previous|prior|what|earlier)/i,
+    /you\s+are\s+now\s+\w*\s*(different|new|another|other|diff)/i,
+    /disregard\s+\w*\s*(previous|all|above|earlier|prior)/i,
+    /override\s+\w*\s*(previous|all|earlier)\s+\w*\s*(instructions?|commands?|rules?)/i,
+
+    // System manipulation attempts
     /system\s*:\s*/i,
     /assistant\s*:\s*/i,
     /human\s*:\s*/i,
     /tell\s+me\s+(your|the)\s+system\s+prompt/i,
     /what\s+(is|are)\s+(your|the)\s+(system\s+)?(prompt|instructions)/i,
-    /override\s+(previous|all)\s+(instructions?|commands?)/i,
-    /disregard\s+(previous|all|above)/i,
+    /show\s+me\s+(your|the)\s+(prompt|instructions|system)/i,
+    /reveal\s+(your|the)\s+(prompt|instructions|system)/i,
+
+    // Role manipulation
+    /act\s+as\s+(a\s+)?(different|new|another)/i,
+    /pretend\s+(to\s+be|you\s+are)\s+(a\s+)?\w+/i,
+    /roleplay\s+as/i,
+    /simulate\s+(being|a)/i,
+
+    // Code injection patterns
     /<\s*script\s*>/i,
     /javascript\s*:/i,
     /data\s*:\s*text\/html/i,
     /eval\s*\(/i,
     /function\s*\(/i,
+    /document\s*\.\s*write/i,
+    /window\s*\.\s*location/i,
+
     // SQL injection patterns
     /union\s+select/i,
     /drop\s+table/i,
     /delete\s+from/i,
+    /insert\s+into/i,
+    /update\s+\w+\s+set/i,
+
     // XSS patterns
     /<\s*iframe/i,
     /<\s*object/i,
     /<\s*embed/i,
     /on\w+\s*=/i,
+    /<\s*img\s+[^>]*src\s*=/i,
+
     // Excessive repetition (potential spam)
-    /(.)\1{50,}/,
+    /(.)\1{30,}/,  // Reduced from 50 to 30 for better detection
     // Extremely long words (potential buffer overflow attempts)
-    /\w{200,}/
+    /\w{150,}/,    // Reduced from 200 to 150 for better detection
+
+    // Repeated punctuation spam
+    /[!@#$%^&*()_+=\[\]{}|;:,.<>?]{20,}/,
+    // Multiple question marks (spam indicator)
+    /\?{5,}/,
+    // Multiple exclamation marks (spam indicator)
+    /!{10,}/,
+
+    // Common spam content patterns
+    /lorem\s+ipsum/i,
+    /ipsum\s+dolor/i,
+    /dolor\s+sit\s+amet/i,
+
+    // Banana spam patterns (common bot test)
+    /how\s+many\s+\w*\s*r\s+in\s+banana/i,
+    /count\s+\w*\s*r\s+in\s+banana/i,
+    /banana\s+\w*\s*r\s+count/i,
+    /letter\s+r\s+in\s+banana/i,
+
+    // Generic counting spam patterns
+    /how\s+many\s+letters?\s+\w+\s+in\s+\w+/i,
+    /count\s+letters?\s+in\s+\w+/i,
+
+    // Test/spam phrases
+    /this\s+is\s+a\s+test\s+message/i,
+    /testing\s+\d+\s*\d*\s*\d*/i,
+    /test\s+test\s+test/i
   ]
 };
 
@@ -236,35 +283,103 @@ export const slowDownMiddleware = slowDown({
   }
 });
 
-// Per-message rate limiter for chat (prevents spam of same content)
-const messageHashes = new Map<string, { count: number, lastSeen: number }>();
+// Enhanced spam detection system
+const messageHashes = new Map<string, { count: number, lastSeen: number, firstSeen: number }>();
+const ipMessageCounts = new Map<string, { count: number, lastReset: number }>();
 
 export const perMessageRateLimiter = (req: Request, res: Response, next: NextFunction): void => {
   const { message } = req.body;
   if (!message) return next();
 
-  // Create hash of message content
-  const messageHash = message.toLowerCase().trim().substring(0, 100);
+  const clientIP = req.ip || 'unknown';
   const now = Date.now();
-  const existing = messageHashes.get(messageHash);
 
-  if (existing) {
-    // If same message sent within 30 seconds, block it
-    if (now - existing.lastSeen < 30000) {
-      existing.count++;
-      if (existing.count > 3) {
+  // Create hash of message content (more comprehensive)
+  const messageHash = message.toLowerCase()
+    .replace(/[^\w\s]/g, '') // Remove punctuation
+    .replace(/\s+/g, ' ')    // Normalize spaces
+    .trim()
+    .substring(0, 150);
+
+  // Track per-IP message frequency
+  const ipData = ipMessageCounts.get(clientIP);
+  if (ipData) {
+    // Reset counter every 5 minutes
+    if (now - ipData.lastReset > 300000) {
+      ipData.count = 1;
+      ipData.lastReset = now;
+    } else {
+      ipData.count++;
+
+      // Block if more than 15 messages in 5 minutes from same IP
+      if (ipData.count > 15) {
+        logSecurityEvent({
+          type: 'rate_limit',
+          ip: clientIP,
+          message: `IP sending too many messages: ${ipData.count} in 5 minutes`,
+          timestamp: new Date(),
+          severity: 'medium'
+        });
+
+        markIPSuspicious(clientIP);
         res.status(429).json({
-          error: 'Please wait before sending the same message again.'
+          error: 'Too many messages. Please slow down and try again later.'
         });
         return;
       }
+    }
+  } else {
+    ipMessageCounts.set(clientIP, { count: 1, lastReset: now });
+  }
+
+  // Track identical/similar message spam
+  const existing = messageHashes.get(messageHash);
+  if (existing) {
+    const timeSinceFirst = now - existing.firstSeen;
+
+    // If same message sent multiple times
+    if (now - existing.lastSeen < 60000) { // Within 1 minute
+      existing.count++;
+
+      // Progressive blocking for repeated messages
+      if (existing.count > 2) {
+        logSecurityEvent({
+          type: 'suspicious_input',
+          ip: clientIP,
+          message: `Repeated message spam: "${message.substring(0, 50)}..." (${existing.count} times)`,
+          timestamp: new Date(),
+          severity: 'medium'
+        });
+
+        markIPSuspicious(clientIP);
+        res.status(429).json({
+          error: 'Please avoid sending the same message repeatedly.'
+        });
+        return;
+      }
+    } else if (timeSinceFirst < 600000 && existing.count > 5) {
+      // Same message more than 5 times in 10 minutes (even with gaps)
+      logSecurityEvent({
+        type: 'suspicious_input',
+        ip: clientIP,
+        message: `Long-term message spam: "${message.substring(0, 50)}..." (${existing.count} times in 10min)`,
+        timestamp: new Date(),
+        severity: 'high'
+      });
+
+      markIPSuspicious(clientIP);
+      res.status(429).json({
+        error: 'This message has been sent too many times. Please try asking something different.'
+      });
+      return;
     } else {
       // Reset count if enough time has passed
       existing.count = 1;
+      existing.firstSeen = now;
     }
     existing.lastSeen = now;
   } else {
-    messageHashes.set(messageHash, { count: 1, lastSeen: now });
+    messageHashes.set(messageHash, { count: 1, lastSeen: now, firstSeen: now });
   }
 
   next();
@@ -502,12 +617,22 @@ export const cleanupRateLimitLogs = () => {
   }
 };
 
-// Cleanup old message hashes
+// Cleanup old message hashes and IP counts
 export const cleanupMessageHashes = () => {
+  const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
   const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+
+  // Clean old message hashes (keep for 10 minutes)
   for (const [hash, data] of messageHashes.entries()) {
-    if (data.lastSeen < fiveMinutesAgo) {
+    if (data.lastSeen < tenMinutesAgo) {
       messageHashes.delete(hash);
+    }
+  }
+
+  // Clean old IP message counts (keep for 5 minutes)
+  for (const [ip, data] of ipMessageCounts.entries()) {
+    if (data.lastReset < fiveMinutesAgo) {
+      ipMessageCounts.delete(ip);
     }
   }
 };
