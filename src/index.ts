@@ -44,10 +44,12 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'portfolio-chatbot-session-secret-change-in-production',
   resave: false,
   saveUninitialized: true,
+  name: 'portfolio-chatbot-session',
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.NODE_ENV === 'production', // HTTPS only in production
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax' // Allow cross-origin in production
   }
 }));
 
@@ -160,11 +162,22 @@ app.post('/api/chat', validateAndSanitizeChat, perMessageRateLimiter, async (req
     const { message } = req.body;
     const clientIP = req.ip || 'unknown';
 
+    // Debug session and cookies
+    console.log('🔍 DEBUG SESSION INFO:');
+    console.log('  Origin:', req.get('Origin'));
+    console.log('  Cookie Header:', req.get('Cookie'));
+    console.log('  Express Session ID:', req.sessionID);
+    console.log('  Session Object:', req.session);
+    console.log('  Existing Chat Session ID:', req.session?.chatSessionId);
+    console.log('  Session Cookie Name:', 'portfolio-chatbot-session');
+
     // Generate or get session ID for tracking
     if (!req.session.chatSessionId) {
       req.session.chatSessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
       req.session.chatStartTime = new Date();
       req.session.messageCount = 0;
+
+      console.log('🆕 CREATING NEW SESSION:', req.session.chatSessionId);
 
       // Log session start
       chatLogger.info('New chat session started', {
@@ -173,6 +186,8 @@ app.post('/api/chat', validateAndSanitizeChat, perMessageRateLimiter, async (req
         sessionId: req.session.chatSessionId,
         timestamp: new Date()
       });
+    } else {
+      console.log('✅ REUSING EXISTING SESSION:', req.session.chatSessionId);
     }
 
     req.session.messageCount = (req.session.messageCount || 0) + 1;
@@ -193,6 +208,11 @@ app.post('/api/chat', validateAndSanitizeChat, perMessageRateLimiter, async (req
         duration,
         timestamp: new Date()
       });
+
+      // Debug response headers
+      console.log('📤 RESPONSE HEADERS:');
+      console.log('  Set-Cookie:', res.get('Set-Cookie'));
+      console.log('  Session ID being sent:', req.session.chatSessionId);
 
       res.json({ response });
     } catch (error: any) {
