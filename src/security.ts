@@ -126,11 +126,11 @@ export const chatLogger = winston.createLogger({
             const userMsg = String(meta.userMessage || '');
             const botMsg = String(meta.botResponse || '');
             const sessionShort = String(meta.sessionId || '').split('_').pop() || 'unknown';
-            return `[${timestamp}] 💬 ${meta.ip} [${sessionShort}#${meta.messageNumber}] → "${userMsg.substring(0, 40)}${userMsg.length > 40 ? '...' : ''}" → "${botMsg.substring(0, 40)}${botMsg.length > 40 ? '...' : ''}"`;
+            return `[${timestamp}] 💬 ${meta.ip} [${sessionShort}#${meta.messageNumber}] → "${userMsg.substring(0, 1000)}${userMsg.length > 1000 ? '...' : ''}" → "${botMsg.substring(0, 1000)}${botMsg.length > 1000 ? '...' : ''}"`;
           } else if (meta.type === 'chat_error') {
             const userMsg = String(meta.userMessage || '');
             const sessionShort = String(meta.sessionId || '').split('_').pop() || 'unknown';
-            return `[${timestamp}] ❌ ${meta.ip} [${sessionShort}#${meta.messageNumber}] → "${userMsg.substring(0, 40)}${userMsg.length > 40 ? '...' : ''}" → ERROR: ${meta.error}`;
+            return `[${timestamp}] ❌ ${meta.ip} [${sessionShort}#${meta.messageNumber}] → "${userMsg.substring(0, 1000)}${userMsg.length > 1000 ? '...' : ''}" → ERROR: ${meta.error}`;
           } else if (meta.type === 'chat_start') {
             const sessionShort = String(meta.sessionId || '').split('_').pop() || 'unknown';
             return `[${timestamp}] 🚀 ${meta.ip} → NEW SESSION [${sessionShort}]`;
