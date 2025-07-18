@@ -3,6 +3,7 @@ import slowDown from 'express-slow-down';
 import helmet from 'helmet';
 import { body, validationResult } from 'express-validator';
 import winston from 'winston';
+import DailyRotateFile from 'winston-daily-rotate-file';
 import { SecurityConfig, SecurityEvent } from './types';
 import { Request, Response, NextFunction } from 'express';
 
@@ -59,7 +60,7 @@ export const securityControls = {
   logLevel: process.env.LOG_LEVEL || 'info'
 };
 
-// Security logger
+// Security logger with daily rotation
 export const securityLogger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
@@ -69,10 +70,72 @@ export const securityLogger = winston.createLogger({
   ),
   defaultMeta: { service: 'portfolio-chatbot-security' },
   transports: [
-    new winston.transports.File({ filename: 'logs/security-error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'logs/security-combined.log' }),
+    new DailyRotateFile({
+      filename: 'logs/security-error-%DATE%.log',
+      datePattern: 'YYYY-MM-DD',
+      level: 'error',
+      maxSize: '20m',
+      maxFiles: '14d',
+      zippedArchive: true
+    }),
+    new DailyRotateFile({
+      filename: 'logs/security-combined-%DATE%.log',
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '20m',
+      maxFiles: '30d',
+      zippedArchive: true
+    }),
     ...(process.env.NODE_ENV !== 'production' ? [new winston.transports.Console({
       format: winston.format.simple()
+    })] : [])
+  ],
+});
+
+// Professional chat logger for clean conversation tracking
+export const chatLogger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    winston.format.printf(({ timestamp, level, message, ...meta }) => {
+      if (meta.type === 'chat_interaction') {
+        return `[${timestamp}] 💬 CHAT | IP: ${meta.ip} | Session: ${meta.sessionId} | Msg#${meta.messageNumber} | User: "${meta.userMessage}" | Bot: "${meta.botResponse}" | Duration: ${meta.duration}ms`;
+      } else if (meta.type === 'chat_error') {
+        return `[${timestamp}] ❌ ERROR | IP: ${meta.ip} | Session: ${meta.sessionId} | Msg#${meta.messageNumber} | User: "${meta.userMessage}" | Error: ${meta.error}`;
+      } else if (meta.type === 'chat_start') {
+        return `[${timestamp}] 🚀 SESSION START | IP: ${meta.ip} | Session: ${meta.sessionId}`;
+      }
+      return `[${timestamp}] ${level.toUpperCase()}: ${message}`;
+    })
+  ),
+  defaultMeta: { service: 'portfolio-chatbot-chat' },
+  transports: [
+    new DailyRotateFile({
+      filename: 'logs/chat-%DATE%.log',
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '50m',
+      maxFiles: '60d',
+      zippedArchive: true
+    }),
+    ...(process.env.NODE_ENV !== 'production' ? [new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.printf(({ timestamp, level, message, ...meta }) => {
+          if (meta.type === 'chat_interaction') {
+            const userMsg = String(meta.userMessage || '');
+            const botMsg = String(meta.botResponse || '');
+            const sessionShort = String(meta.sessionId || '').split('_').pop() || 'unknown';
+            return `[${timestamp}] 💬 ${meta.ip} [${sessionShort}#${meta.messageNumber}] → "${userMsg.substring(0, 40)}${userMsg.length > 40 ? '...' : ''}" → "${botMsg.substring(0, 40)}${botMsg.length > 40 ? '...' : ''}"`;
+          } else if (meta.type === 'chat_error') {
+            const userMsg = String(meta.userMessage || '');
+            const sessionShort = String(meta.sessionId || '').split('_').pop() || 'unknown';
+            return `[${timestamp}] ❌ ${meta.ip} [${sessionShort}#${meta.messageNumber}] → "${userMsg.substring(0, 40)}${userMsg.length > 40 ? '...' : ''}" → ERROR: ${meta.error}`;
+          } else if (meta.type === 'chat_start') {
+            const sessionShort = String(meta.sessionId || '').split('_').pop() || 'unknown';
+            return `[${timestamp}] 🚀 ${meta.ip} → NEW SESSION [${sessionShort}]`;
+          }
+          return `[${timestamp}] ${level}: ${message}`;
+        })
+      )
     })] : [])
   ],
 });

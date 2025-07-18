@@ -62,11 +62,8 @@ export class LangChainRAGService {
 
   async query(userInput: string): Promise<string> {
     try {
-      console.log('🔍 Processing query with LangChain:', userInput.substring(0, 100) + '...');
-      
       // Get conversation history from LangChain memory
       const chatHistory = await this.memory.chatHistory.getMessages();
-      console.log('💬 Chat history length:', chatHistory.length);
 
       // Generate embedding for the query
       const queryEmbedding = await this.generateEmbedding(userInput);
@@ -76,11 +73,6 @@ export class LangChainRAGService {
         vector: queryEmbedding,
         topK: 3,
         includeMetadata: true,
-      });
-
-      console.log('🔍 Search results:', searchResults.matches?.length || 0, 'matches found');
-      searchResults.matches?.forEach((match: any, index: number) => {
-        console.log(`  Match ${index + 1}: Score ${match.score?.toFixed(3)}, Category: ${match.metadata?.category}`);
       });
 
       // Extract context from search results
@@ -94,9 +86,6 @@ export class LangChainRAGService {
         .slice(-6) // Last 6 messages for context
         .map(msg => `${msg._getType() === 'human' ? 'User' : 'Assistant'}: ${msg.content}`)
         .join('\n');
-
-      console.log('📄 Context length:', context.length, 'characters');
-      console.log('💬 Conversation context:', conversationContext.substring(0, 200) + '...');
 
       // Determine response type
       const isGreeting = /^(hi|hello|hey|good morning|good afternoon|good evening|what's up|how are you|yo|sup|howdy|hiya|wassup|what's good|kumusta|kamusta|musta|oy|hoy)$/i.test(userInput.trim());
@@ -256,7 +245,7 @@ RESPONSE:`;
       } catch (error: any) {
         if (error.message?.includes('429') || error.message?.includes('quota')) {
           // Rate limit exceeded - provide a fallback response
-          console.warn('⚠️ Google AI quota exceeded, providing fallback response');
+          console.warn('Google AI quota exceeded, using fallback response');
           
           if (context) {
             responseText = `Based on the available information: ${context.split('\n\n')[0].substring(0, 200)}...
@@ -276,18 +265,10 @@ I'm currently experiencing high usage and cannot generate a full AI response. Ho
         { output: responseText }
       );
 
-      console.log('📄 Generated response:', responseText.substring(0, 100) + '...');
-      console.log('📚 Source documents found:', searchResults.matches?.length || 0);
-      
       return responseText;
-    } catch (error) {
-      console.error('❌ ERROR in LangChain RAG query:');
-      console.error('Error type:', error.constructor.name);
-      console.error('Error message:', error.message);
-      console.error('Query was:', userInput);
-      if (error.stack) {
-        console.error('Stack trace:', error.stack);
-      }
+    } catch (error: any) {
+      // Log error without excessive detail
+      console.error('RAG query failed:', error.message);
       throw new Error(`Failed to process query: ${error.message}`);
     }
   }

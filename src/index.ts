@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import session from 'express-session';
 import { LangChainRAGService } from './rag-langchain';
 import {
   securityHeaders,
@@ -14,6 +15,7 @@ import {
   ipProtection,
   markIPSuspicious,
   securityLogger,
+  chatLogger,
   securityConfig,
   logSecurityEvent,
   perMessageRateLimiter,
@@ -25,6 +27,10 @@ dotenv.config();
 
 const app = express();
 
+// Trust proxy configuration for proper IP detection
+// This is essential for getting real client IPs from reverse proxies (Render, Heroku, etc.)
+app.set('trust proxy', true);
+
 // Security middleware (applied first)
 app.use(securityHeaders);
 app.use(requestLogger);
@@ -32,6 +38,18 @@ app.use(ipProtection);
 
 // CORS with enhanced security
 app.use(cors(corsOptions));
+
+// Session configuration for chat tracking
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'portfolio-chatbot-session-secret-change-in-production',
+  resave: false,
+  saveUninitialized: true,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
 
 // Smart rate limiting (re-enabled with better logic)
 app.use(apiRateLimiter);
@@ -132,39 +150,63 @@ const validateAndSanitizeChat = (req: any, res: any, next: any) => {
 
 // Chat endpoint with enhanced security
 app.post('/api/chat', validateAndSanitizeChat, perMessageRateLimiter, async (req: any, res: any) => {
-    try {
-      const { message } = req.body;
-      const clientIP = req.ip || 'unknown';
+    const startTime = Date.now();
+    const { message } = req.body;
+    const clientIP = req.ip || 'unknown';
 
-      console.log(`Received chat request from ${clientIP}: ${message.substring(0, 100)}...`);
+    // Generate or get session ID for tracking
+    if (!req.session.chatSessionId) {
+      req.session.chatSessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+      req.session.chatStartTime = new Date();
+      req.session.messageCount = 0;
 
-      const response = await ragService.query(message);
-
-      console.log(`Generated response: ${response.substring(0, 100)}...`);
-
-      // Log successful interaction
-      securityLogger.info('Successful chat interaction', {
+      // Log session start
+      chatLogger.info('New chat session started', {
+        type: 'chat_start',
         ip: clientIP,
-        messageLength: message.length,
-        responseLength: response.length,
+        sessionId: req.session.chatSessionId,
+        timestamp: new Date()
+      });
+    }
+
+    req.session.messageCount = (req.session.messageCount || 0) + 1;
+
+    try {
+      const response = await ragService.query(message);
+      const duration = Date.now() - startTime;
+
+      // Professional chat logging with session tracking
+      chatLogger.info('Chat interaction completed', {
+        type: 'chat_interaction',
+        ip: clientIP,
+        sessionId: req.session.chatSessionId,
+        messageNumber: req.session.messageCount,
+        userMessage: message,
+        botResponse: response,
+        duration,
         timestamp: new Date()
       });
 
       res.json({ response });
     } catch (error: any) {
-      const clientIP = req.ip || 'unknown';
+      const duration = Date.now() - startTime;
 
-      console.error('❌ ERROR in chat endpoint:');
-      console.error('Error type:', error.constructor.name);
-      console.error('Error message:', error.message);
-      console.error('Full error:', error);
-      if (error.stack) {
-        console.error('Stack trace:', error.stack);
-      }
+      // Professional error logging with session tracking
+      chatLogger.error('Chat interaction failed', {
+        type: 'chat_error',
+        ip: clientIP,
+        sessionId: req.session.chatSessionId,
+        messageNumber: req.session.messageCount,
+        userMessage: message,
+        error: error.message,
+        duration,
+        timestamp: new Date()
+      });
 
-      // Log error and mark IP as suspicious for repeated errors
+      // Log to security logger for monitoring
       securityLogger.error('Chat endpoint error', {
         ip: clientIP,
+        sessionId: req.session.chatSessionId,
         error: error.message,
         timestamp: new Date()
       });
