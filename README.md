@@ -4,19 +4,37 @@ A RAG (Retrieval-Augmented Generation) powered chatbot API for portfolio website
 
 ## Features
 
-- 🤖 Intelligent chatbot responses using RAG architecture and LangChain
-- 🔍 Semantic search through portfolio content
-- 📚 Vector database for efficient content retrieval
-- 🚀 Fast and scalable Express.js API
-- 🔒 **Comprehensive Security Suite**
-  - 🛡️ Input validation and sanitization
-  - 🚦 Rate limiting and DoS protection
-  - 🌐 Enhanced CORS security
-  - 📊 Security monitoring and logging
-  - 🚫 Automatic IP blocking for malicious behavior
-- 📊 Built-in testing and seeding capabilities
-- 📄 PDF document processing and indexing
+### 🧠 Enhanced RAG System
+- 🤖 **Personality-Aware Responses**: Maintains consistent communication style and personality
+- 🎯 **Context-Type Categorization**: Foundational, technical, personal, and behavioral content types
+- ⭐ **Priority-Based Ranking**: High/medium/low priority content weighting
+- 🏷️ **Semantic Tagging**: Auto-generated searchable keywords and concepts
+- 🔍 **Multi-Vector Search**: Combines semantic similarity with personality relevance
+
+### 📚 Advanced Content Management
+- 📄 **Multi-Source Integration**: Portfolio content, PDF documents, and contextual information
+- 🔧 **Enhanced Metadata**: Comprehensive document metadata with personality weights
+- 📊 **Content Analytics**: Distribution analysis and quality monitoring
+- 🔄 **Intelligent Updates**: Smart content versioning and duplicate handling
+
+### 🚀 Performance & Scalability
+- ⚡ **Optimized Retrieval**: Fast, accurate search with personality-aware ranking
+- 📈 **Performance Monitoring**: Built-in analytics and optimization tools
+- 🧹 **Memory Management**: Efficient session handling and cleanup
+- 📊 **Database Management**: Comprehensive tools for maintenance and optimization
+
+### 🔒 **Comprehensive Security Suite**
+- 🛡️ Input validation and sanitization
+- 🚦 Rate limiting and DoS protection
+- 🌐 Enhanced CORS security
+- 📊 Security monitoring and logging
+- 🚫 Automatic IP blocking for malicious behavior
+
+### 🛠️ Development Tools
+- 📊 Built-in testing and validation capabilities
+- 📄 Advanced PDF document processing and indexing
 - 🔧 Flexible content chunking strategies
+- 📋 Comprehensive setup and management scripts
 
 ## Prerequisites
 
@@ -81,21 +99,53 @@ ALLOWED_ORIGINS=http://localhost:3000,https://yourdomain.com
 2. Create a new API key
 3. Add it to your `.env` file
 
-### 5. Seed the Vector Database
+### 5. Set Up Your Enhanced Vector Database
 
-Populate the database with sample portfolio data:
+#### Option A: Complete Integrated Setup (Recommended)
+Create a comprehensive, personality-aware database with all content sources:
+
+```bash
+npm run seed:integrated
+```
+
+This will:
+- ✅ Process your enhanced portfolio content with personality awareness
+- ✅ Integrate PDF documents (resume, about, etc.)
+- ✅ Add contextual information for better responses
+- ✅ Apply semantic tagging and priority weighting
+- ✅ Validate the integration with test queries
+
+#### Option B: Enhanced Content Only
+Seed with enhanced portfolio content:
+
+```bash
+npm run seed:enhanced
+```
+
+#### Option C: Traditional Seeding
+Use the original seeding method:
 
 ```bash
 npm run seed
 ```
 
-Or seed with custom data:
+### 6. Validate Your Setup
+Ensure everything is working correctly:
 
 ```bash
-npm run seed:custom
+npm run validate
 ```
 
-### 6. Add PDF Documents (Optional)
+This comprehensive validation will test:
+- Environment configuration
+- Database connectivity
+- Content availability
+- Personality awareness
+- Multi-source integration
+- Response quality
+- Performance
+
+### 7. Add PDF Documents (Optional)
 
 Add PDF documents to enhance your chatbot's knowledge base:
 
@@ -109,6 +159,24 @@ npm run seed:pdf resume.pdf portfolio.pdf
 # Use different chunking strategies
 npm run seed:pdf -- --small-chunks  # Better for Q&A
 npm run seed:pdf -- --large-chunks  # Better for context
+```
+
+### 8. Database Management
+
+Monitor and maintain your database:
+
+```bash
+# Generate comprehensive management report
+npm run db:manage
+
+# Quick database statistics
+npm run db:stats
+
+# Test retrieval quality
+npm run db:test
+
+# Optimize database performance
+npm run db:optimize
 ```
 
 📄 **See [PDF-SETUP-GUIDE.md](./PDF-SETUP-GUIDE.md) for detailed PDF integration instructions.**

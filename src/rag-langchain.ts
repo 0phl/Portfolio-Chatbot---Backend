@@ -2,10 +2,10 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { GoogleGenerativeAIEmbeddings } from "@langchain/google-genai";
 import { Pinecone } from "@pinecone-database/pinecone";
 import { BufferMemory } from "langchain/memory";
-import { VectorSearchResult, DocumentMetadata, PDFProcessingOptions } from "./types";
+import { VectorSearchResult, DocumentMetadata, PDFProcessingOptions, EnhancedDocumentMetadata } from "./types";
 import * as fs from 'fs';
 import * as path from 'path';
-const pdf = require('pdf-parse');
+import pdf from 'pdf-parse';
 
 export class LangChainRAGService {
   private llm: any;
@@ -97,7 +97,7 @@ export class LangChainRAGService {
       // Build conversation context from LangChain memory
       const conversationContext = chatHistory
         .slice(-6) // Last 6 messages for context
-        .map(msg => `${msg._getType() === 'human' ? 'User' : 'Assistant'}: ${msg.content}`)
+        .map(msg => `${msg.constructor.name === 'HumanMessage' ? 'User' : 'Assistant'}: ${msg.content}`)
         .join('\n');
 
       // Determine response type
@@ -116,8 +116,8 @@ export class LangChainRAGService {
       const tagalogPatterns = /\b(ano|anong|paano|saan|sino|kailan|bakit|marunong|alam|pwede|mga|ka|mo|ko|ako|ikaw|siya|tayo|kayo|sila|lang|naman|din|rin|ba|po|oo|hindi|di|wala|meron|may|sa|ng|na|at|o|pero|kasi|kaya|kung|kapag|para|dahil|habang|tulad|tapos|sige|galing|wow|grabe|talaga|sobra|medyo|konti|dami|lahat|walang|maging|gagawin|ginawa|magawa|nakakagawa)\b/i;
       const isTagalog = tagalogPatterns.test(userInput);
       
-      let prompt;
-      
+      let prompt: string;
+
       if (isConversationEnding) {
         prompt = `You are Ronan's portfolio chatbot with a friendly, conversational personality. The user seems to be ending the conversation with: "${userInput}"
 
@@ -289,8 +289,8 @@ I'm currently experiencing high usage and cannot generate a full AI response. Ho
   async addDocument(text: string, metadata: DocumentMetadata = { text }): Promise<void> {
     try {
       const embedding = await this.generateEmbedding(text);
-      const id = `doc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      
+      const id = `doc-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+
       await this.index.upsert([{
         id,
         values: embedding,
@@ -310,8 +310,8 @@ I'm currently experiencing high usage and cannot generate a full AI response. Ho
       
       for (const doc of documents) {
         const embedding = await this.generateEmbedding(doc.text);
-        const id = `doc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        
+        const id = `doc-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+
         vectors.push({
           id,
           values: embedding,
@@ -396,9 +396,179 @@ I'm currently experiencing high usage and cannot generate a full AI response. Ho
     return this.sessionMemories.size;
   }
 
+  // Enhanced method for adding documents with comprehensive metadata
+  async addEnhancedDocument(text: string, metadata: EnhancedDocumentMetadata): Promise<void> {
+    try {
+      const embedding = await this.generateEmbedding(text);
+      const timestamp = new Date().toISOString();
+
+      // Generate unique ID with meaningful prefix
+      const categoryPrefix = metadata.category?.substring(0, 3) || 'doc';
+      const id = `${categoryPrefix}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+
+      // Enhance metadata with computed fields
+      const enhancedMetadata: EnhancedDocumentMetadata = {
+        ...metadata,
+        chunk_id: id,
+        created_at: timestamp,
+        updated_at: timestamp,
+        word_count: text.split(/\s+/).length,
+        personality_weight: this.calculatePersonalityWeight(metadata),
+        semantic_tags: this.extractSemanticTags(text, metadata)
+      };
+
+      await this.index.upsert([{
+        id,
+        values: embedding,
+        metadata: enhancedMetadata
+      }]);
+
+      console.log(`✅ Enhanced document added: ${metadata.title} (${enhancedMetadata.word_count} words)`);
+    } catch (error) {
+      console.error('❌ Error adding enhanced document:', error);
+      throw error;
+    }
+  }
+
+  // Enhanced method for batch adding documents with optimization
+  async addEnhancedDocuments(documents: EnhancedDocumentMetadata[]): Promise<void> {
+    try {
+      console.log(`📄 Processing ${documents.length} enhanced documents...`);
+
+      const vectors = [];
+      const timestamp = new Date().toISOString();
+
+      for (const doc of documents) {
+        const embedding = await this.generateEmbedding(doc.text);
+        const categoryPrefix = doc.category?.substring(0, 3) || 'doc';
+        const id = `${categoryPrefix}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+
+        // Enhance metadata with computed fields
+        const enhancedMetadata: EnhancedDocumentMetadata = {
+          ...doc,
+          chunk_id: id,
+          created_at: timestamp,
+          updated_at: timestamp,
+          word_count: doc.text.split(/\s+/).length,
+          personality_weight: this.calculatePersonalityWeight(doc),
+          semantic_tags: this.extractSemanticTags(doc.text, doc)
+        };
+
+        vectors.push({
+          id,
+          values: embedding,
+          metadata: enhancedMetadata
+        });
+
+        console.log(`  ✓ Processed: ${doc.title} (${enhancedMetadata.word_count} words, priority: ${doc.priority})`);
+      }
+
+      // Batch upsert for efficiency
+      await this.index.upsert(vectors);
+      console.log(`✅ Successfully added ${documents.length} enhanced documents to vector database`);
+    } catch (error) {
+      console.error('❌ Error adding enhanced documents:', error);
+      throw error;
+    }
+  }
+
+  // Calculate personality weight based on content type and category
+  private calculatePersonalityWeight(metadata: EnhancedDocumentMetadata): number {
+    let weight = 0.5; // Default weight
+
+    // Boost personality-relevant content
+    if (metadata.context_type === 'foundational' || metadata.context_type === 'behavioral') {
+      weight = 1.0;
+    } else if (metadata.context_type === 'personal') {
+      weight = 0.9;
+    } else if (metadata.category === 'identity' || metadata.category === 'communication') {
+      weight = 0.95;
+    } else if (metadata.priority === 'high') {
+      weight = 0.8;
+    } else if (metadata.context_type === 'technical') {
+      weight = 0.6;
+    }
+
+    return Math.min(weight, 1.0);
+  }
+
+  // Extract semantic tags for better searchability
+  private extractSemanticTags(text: string, metadata: EnhancedDocumentMetadata): string[] {
+    const tags: string[] = [];
+
+    // Add category and context type as tags
+    if (metadata.category) tags.push(metadata.category);
+    if (metadata.context_type) tags.push(metadata.context_type);
+
+    // Extract technology-related tags
+    const techKeywords = [
+      'react', 'typescript', 'javascript', 'node.js', 'firebase', 'flutter',
+      'php', 'mysql', 'tailwind', 'css', 'html', 'python', 'java', 'dart',
+      'api', 'database', 'mobile', 'web', 'frontend', 'backend', 'fullstack'
+    ];
+
+    const lowerText = text.toLowerCase();
+    techKeywords.forEach(keyword => {
+      if (lowerText.includes(keyword)) {
+        tags.push(keyword);
+      }
+    });
+
+    // Add personality-related tags
+    const personalityKeywords = [
+      'student', 'learning', 'collaborative', 'helpful', 'friendly',
+      'passionate', 'enthusiastic', 'problem-solving', 'creative'
+    ];
+
+    personalityKeywords.forEach(keyword => {
+      if (lowerText.includes(keyword)) {
+        tags.push(keyword);
+      }
+    });
+
+    return [...new Set(tags)]; // Remove duplicates
+  }
+
+  // Enhanced search with personality-aware ranking
+  async searchWithPersonality(query: string, topK: number = 5): Promise<VectorSearchResult[]> {
+    try {
+      const queryEmbedding = await this.generateEmbedding(query);
+
+      // Search with higher topK to allow for personality filtering
+      const searchResults = await this.index.query({
+        vector: queryEmbedding,
+        topK: topK * 2,
+        includeMetadata: true,
+      });
+
+      // Apply personality-aware ranking
+      const rankedResults = searchResults.matches
+        .filter((match: any) => match.score > 0.3)
+        .map((match: any) => ({
+          id: match.id,
+          score: this.calculatePersonalityAdjustedScore(match.score, match.metadata),
+          metadata: match.metadata as EnhancedDocumentMetadata
+        }))
+        .sort((a: VectorSearchResult, b: VectorSearchResult) => b.score - a.score)
+        .slice(0, topK);
+
+      return rankedResults;
+    } catch (error) {
+      console.error('❌ Error in personality-aware search:', error);
+      throw error;
+    }
+  }
+
+  // Calculate personality-adjusted score
+  private calculatePersonalityAdjustedScore(originalScore: number, metadata: any): number {
+    const personalityWeight = metadata.personality_weight || 0.5;
+    const priorityBoost = metadata.priority === 'high' ? 0.1 : metadata.priority === 'medium' ? 0.05 : 0;
+
+    return originalScore + (personalityWeight * 0.1) + priorityBoost;
+  }
+
   // Method to cleanup old sessions (call periodically to prevent memory leaks)
   cleanupOldSessions(maxAgeHours: number = 24): void {
-    const cutoffTime = Date.now() - (maxAgeHours * 60 * 60 * 1000);
     let cleanedCount = 0;
 
     // Note: This is a simple cleanup. In production, you'd want to track session timestamps

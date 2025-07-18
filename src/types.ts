@@ -29,6 +29,18 @@ export interface DocumentMetadata {
   fileSize?: number;
 }
 
+export interface EnhancedDocumentMetadata extends DocumentMetadata {
+  priority?: 'high' | 'medium' | 'low';
+  context_type?: 'foundational' | 'technical' | 'professional' | 'project_detailed' | 'background' | 'personal' | 'behavioral' | 'contact';
+  chunk_id?: string;
+  parent_doc?: string;
+  created_at?: string;
+  updated_at?: string;
+  word_count?: number;
+  semantic_tags?: string[];
+  personality_weight?: number;
+}
+
 export interface PDFProcessingOptions {
   chunkSize?: number;
   chunkOverlap?: number;
