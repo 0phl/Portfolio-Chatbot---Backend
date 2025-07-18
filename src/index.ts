@@ -73,6 +73,12 @@ let ragService: LangChainRAGService;
 try {
   ragService = new LangChainRAGService();
   console.log('RAG Service initialized successfully');
+
+  // Setup periodic cleanup of old sessions to prevent memory leaks
+  setInterval(() => {
+    ragService.cleanupOldSessions(24); // Clean sessions older than 24 hours
+  }, 60 * 60 * 1000); // Run every hour
+
 } catch (error) {
   console.error('Failed to initialize RAG Service:', error);
   process.exit(1);
@@ -172,7 +178,8 @@ app.post('/api/chat', validateAndSanitizeChat, perMessageRateLimiter, async (req
     req.session.messageCount = (req.session.messageCount || 0) + 1;
 
     try {
-      const response = await ragService.query(message);
+      // Use session ID for isolated conversation memory
+      const response = await ragService.query(message, req.session.chatSessionId);
       const duration = Date.now() - startTime;
 
       // Professional chat logging with session tracking

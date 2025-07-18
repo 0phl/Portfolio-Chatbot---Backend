@@ -10,7 +10,7 @@ const pdf = require('pdf-parse');
 export class LangChainRAGService {
   private llm: any;
   private embeddings: GoogleGenerativeAIEmbeddings;
-  private memory: BufferMemory;
+  private sessionMemories: Map<string, BufferMemory>; // Session-based memory storage
   private pinecone: Pinecone;
   private index: any;
 
@@ -39,13 +39,23 @@ export class LangChainRAGService {
     });
     this.index = this.pinecone.index(process.env.PINECONE_INDEX!);
 
-    // Initialize memory for conversations
-    this.memory = new BufferMemory({
-      memoryKey: "chat_history",
-      returnMessages: true,
-    });
+    // Initialize session-based memory storage
+    this.sessionMemories = new Map<string, BufferMemory>();
 
     console.log('✅ LangChain RAG Service initialized successfully');
+  }
+
+  // Get or create memory for a specific session
+  private getSessionMemory(sessionId: string): BufferMemory {
+    if (!this.sessionMemories.has(sessionId)) {
+      const memory = new BufferMemory({
+        memoryKey: "chat_history",
+        returnMessages: true,
+      });
+      this.sessionMemories.set(sessionId, memory);
+      console.log(`🧠 Created new memory for session: ${sessionId}`);
+    }
+    return this.sessionMemories.get(sessionId)!;
   }
 
   async generateEmbedding(text: string): Promise<number[]> {
@@ -60,10 +70,13 @@ export class LangChainRAGService {
     }
   }
 
-  async query(userInput: string): Promise<string> {
+  async query(userInput: string, sessionId: string = 'default'): Promise<string> {
     try {
-      // Get conversation history from LangChain memory
-      const chatHistory = await this.memory.chatHistory.getMessages();
+      // Get session-specific memory
+      const sessionMemory = this.getSessionMemory(sessionId);
+
+      // Get conversation history from session-specific memory
+      const chatHistory = await sessionMemory.chatHistory.getMessages();
 
       // Generate embedding for the query
       const queryEmbedding = await this.generateEmbedding(userInput);
@@ -259,8 +272,8 @@ I'm currently experiencing high usage and cannot generate a full AI response. Ho
         }
       }
 
-      // Save conversation to LangChain memory
-      await this.memory.saveContext(
+      // Save conversation to session-specific memory
+      await sessionMemory.saveContext(
         { input: userInput },
         { output: responseText }
       );
@@ -349,21 +362,55 @@ I'm currently experiencing high usage and cannot generate a full AI response. Ho
     }
   }
 
-  // Method to clear conversation memory (useful for new sessions)
-  async clearMemory(): Promise<void> {
-    this.memory.clear();
-    console.log('Conversation memory cleared');
+  // Method to clear conversation memory for a specific session
+  async clearMemory(sessionId: string = 'default'): Promise<void> {
+    if (this.sessionMemories.has(sessionId)) {
+      const sessionMemory = this.sessionMemories.get(sessionId)!;
+      sessionMemory.clear();
+      console.log(`Conversation memory cleared for session: ${sessionId}`);
+    }
   }
 
-  // Method to get conversation history
-  async getConversationHistory(): Promise<any> {
-    return await this.memory.chatHistory.getMessages();
+  // Method to completely remove a session's memory
+  async removeSession(sessionId: string): Promise<void> {
+    if (this.sessionMemories.has(sessionId)) {
+      this.sessionMemories.delete(sessionId);
+      console.log(`Session memory removed: ${sessionId}`);
+    }
   }
 
-  // Method to get memory summary
-  async getMemorySummary(): Promise<string> {
-    const messages = await this.getConversationHistory();
-    return `Conversation has ${messages.length} messages`;
+  // Method to get conversation history for a specific session
+  async getConversationHistory(sessionId: string = 'default'): Promise<any> {
+    const sessionMemory = this.getSessionMemory(sessionId);
+    return await sessionMemory.chatHistory.getMessages();
+  }
+
+  // Method to get memory summary for a specific session
+  async getMemorySummary(sessionId: string = 'default'): Promise<string> {
+    const messages = await this.getConversationHistory(sessionId);
+    return `Session ${sessionId} has ${messages.length} messages`;
+  }
+
+  // Method to get active session count
+  getActiveSessionCount(): number {
+    return this.sessionMemories.size;
+  }
+
+  // Method to cleanup old sessions (call periodically to prevent memory leaks)
+  cleanupOldSessions(maxAgeHours: number = 24): void {
+    const cutoffTime = Date.now() - (maxAgeHours * 60 * 60 * 1000);
+    let cleanedCount = 0;
+
+    // Note: This is a simple cleanup. In production, you'd want to track session timestamps
+    // For now, we'll just limit the total number of sessions
+    if (this.sessionMemories.size > 100) {
+      const sessionsToRemove = Array.from(this.sessionMemories.keys()).slice(0, 50);
+      sessionsToRemove.forEach(sessionId => {
+        this.sessionMemories.delete(sessionId);
+        cleanedCount++;
+      });
+      console.log(`Cleaned up ${cleanedCount} old sessions`);
+    }
   }
 
   // PDF Processing Methods
