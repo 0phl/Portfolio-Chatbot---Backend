@@ -85,9 +85,10 @@ export const securityLogger = winston.createLogger({
       maxFiles: '30d',
       zippedArchive: true
     }),
-    ...(process.env.NODE_ENV !== 'production' ? [new winston.transports.Console({
+    // Always enable console logging for Render (since file logs are ephemeral)
+    new winston.transports.Console({
       format: winston.format.simple()
-    })] : [])
+    })
   ],
 });
 
@@ -116,7 +117,8 @@ export const chatLogger = winston.createLogger({
       maxFiles: '60d',
       zippedArchive: true
     }),
-    ...(process.env.NODE_ENV !== 'production' ? [new winston.transports.Console({
+    // Always enable console logging for Render (since file logs are ephemeral)
+    new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
         winston.format.printf(({ timestamp, level, message, ...meta }) => {
@@ -136,7 +138,7 @@ export const chatLogger = winston.createLogger({
           return `[${timestamp}] ${level}: ${message}`;
         })
       )
-    })] : [])
+    })
   ],
 });
 
