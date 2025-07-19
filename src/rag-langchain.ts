@@ -119,7 +119,9 @@ export class LangChainRAGService {
       let prompt: string;
 
       if (isConversationEnding) {
-        prompt = `You are Ronan's portfolio chatbot with a friendly, conversational personality. The user seems to be ending the conversation with: "${userInput}"
+        prompt = `SYSTEM: You must respond in plain text only. Never use asterisks (*), bullet points, or any markdown formatting. Write like you're texting a friend.
+
+You are Ronan's portfolio chatbot with a friendly, conversational personality. The user seems to be ending the conversation with: "${userInput}"
 
 CONVERSATION HISTORY:
 ${conversationContext}
@@ -138,7 +140,9 @@ INSTRUCTIONS:
 
 RESPONSE:`;
       } else if (isContactRequest) {
-        prompt = `You are Ronan's portfolio chatbot with a friendly, conversational personality. The user is asking for contact information: "${userInput}"
+        prompt = `SYSTEM: You must respond in plain text only. Never use asterisks (*), bullet points, or any markdown formatting. Write like you're texting a friend.
+
+You are Ronan's portfolio chatbot with a friendly, conversational personality. The user is asking for contact information: "${userInput}"
 
 CONVERSATION HISTORY:
 ${conversationContext}
@@ -154,15 +158,19 @@ Reply to the user in a direct, clear tone like a Filipino IT student in his 20s 
 INSTRUCTIONS:
 - Respond in a natural, conversational way like you're sharing contact info in a chat
 - ${isTagalog ? 'Since the user used Tagalog, you can mix some Tagalog with English naturally' : 'Keep response primarily in English with a friendly, professional tone'}
-- DO NOT use asterisks (*), bullet points, or formatted lists
+- ABSOLUTELY NO ASTERISKS (*) OR MARKDOWN FORMATTING - write in plain text only
+- DO NOT use bullet points, numbered lists, or any formatted lists
 - Present the contact info naturally in sentences, like: "You can reach me at [email] or call me at [phone]"
 - Make it feel like a normal chat conversation, not a formal document
 - Be helpful and encouraging about reaching out
 - Keep it conversational and approachable
+- Write like you're texting a friend - no special formatting whatsoever
 
 RESPONSE:`;
       } else if (isGreeting) {
-        prompt = `You are Ronan's portfolio chatbot with a friendly, conversational personality. The user just greeted you with "${userInput}".
+        prompt = `SYSTEM: You must respond in plain text only. Never use asterisks (*), bullet points, or any markdown formatting. Write like you're texting a friend.
+
+You are Ronan's portfolio chatbot with a friendly, conversational personality. The user just greeted you with "${userInput}".
 
 CONVERSATION HISTORY:
 ${conversationContext}
@@ -186,7 +194,9 @@ INSTRUCTIONS:
 
 RESPONSE:`;
       } else if (isGeneral) {
-        prompt = `You are Ronan's portfolio chatbot with a friendly, conversational personality. The user asked a general question: "${userInput}"
+        prompt = `SYSTEM: You must respond in plain text only. Never use asterisks (*), bullet points, or any markdown formatting. Write like you're texting a friend.
+
+You are Ronan's portfolio chatbot with a friendly, conversational personality. The user asked a general question: "${userInput}"
 
 AVAILABLE CONTEXT:
 ${context}
@@ -212,12 +222,16 @@ INSTRUCTIONS:
 - Vary your conversation style based on context - don't be repetitive
 - Keep it conversational and engaging, like talking to a friend
 - Speak in first person as Ronan ("I'm...", "I specialize in...", "I've worked on...")
-- DO NOT use asterisks (*), bullet points, or formatted lists - write in natural sentences
+- ABSOLUTELY NO ASTERISKS (*) OR MARKDOWN FORMATTING - write in plain text only
+- DO NOT use bullet points, numbered lists, or any formatted lists - write in natural sentences
+- Write like you're having a casual conversation - no special formatting whatsoever
 - VARY your endings - don't always ask "want to know more" - mix it up with natural conversation flow
 
 RESPONSE:`;
       } else {
-        prompt = `You are Ronan's portfolio chatbot with a friendly, conversational personality. Answer the specific question using the provided context and conversation history.
+        prompt = `SYSTEM: You must respond in plain text only. Never use asterisks (*), bullet points, or any markdown formatting. Write like you're texting a friend.
+
+You are Ronan's portfolio chatbot with a friendly, conversational personality. Answer the specific question using the provided context and conversation history.
 
 RELEVANT CONTEXT:
 ${context}
@@ -252,7 +266,9 @@ INSTRUCTIONS:
 - If the context doesn't contain relevant information, be honest but friendly: "I don't have that specific info, but..."
 - Don't provide information not related to the question
 - Keep responses focused, helpful, and conversational (not overwhelming)
-- DO NOT use asterisks (*), bullet points, or formatted lists - write in natural sentences
+- ABSOLUTELY NO ASTERISKS (*) OR MARKDOWN FORMATTING - write in plain text only
+- DO NOT use bullet points, numbered lists, or any formatted lists - write in natural sentences
+- Write like you're texting or chatting casually - no special formatting whatsoever
 - BE SMART about conversation context: read the flow and conversation history to determine appropriate endings
 - VARY your endings based on situation:
   * If user seems satisfied/done: "Hope that helps!" or "Let me know if you need anything else!"
@@ -274,10 +290,10 @@ RESPONSE:`;
         if (error.message?.includes('429') || error.message?.includes('quota')) {
           // Rate limit exceeded - provide a fallback response
           console.warn('Google AI quota exceeded, using fallback response');
-          
+
           if (context) {
             responseText = `Based on the available information: ${context.split('\n\n')[0].substring(0, 200)}...
-            
+
 I'm currently experiencing high usage and cannot generate a full AI response. However, I found relevant information about your query in my knowledge base. Please try again in a few moments for a more detailed AI-generated response.`;
           } else {
             responseText = "I'm currently experiencing high usage and cannot process your request right now. Please try again in a few moments, or check if your question relates to my portfolio, skills, or projects.";
@@ -286,6 +302,9 @@ I'm currently experiencing high usage and cannot generate a full AI response. Ho
           throw error; // Re-throw if it's not a rate limit error
         }
       }
+
+      // Post-process response to remove unwanted formatting
+      responseText = this.cleanResponseFormatting(responseText);
 
       // Save conversation to session-specific memory
       await sessionMemory.saveContext(
@@ -596,6 +615,21 @@ I'm currently experiencing high usage and cannot generate a full AI response. Ho
       });
       console.log(`Cleaned up ${cleanedCount} old sessions`);
     }
+  }
+
+  // Clean response formatting to remove unwanted asterisks and formatting
+  private cleanResponseFormatting(text: string): string {
+    return text
+      // Remove asterisks used for bold formatting
+      .replace(/\*\*(.*?)\*\*/g, '$1')  // Remove **bold** formatting
+      .replace(/\*(.*?)\*/g, '$1')      // Remove *italic* formatting
+      // Remove bullet points and list formatting
+      .replace(/^\s*[\*\-\+]\s+/gm, '') // Remove bullet points at start of lines
+      .replace(/^\s*\d+\.\s+/gm, '')    // Remove numbered lists
+      // Clean up extra whitespace
+      .replace(/\n\s*\n\s*\n/g, '\n\n') // Replace multiple line breaks with double
+      .replace(/\s+/g, ' ')             // Replace multiple spaces with single space
+      .trim();
   }
 
   // PDF Processing Methods
