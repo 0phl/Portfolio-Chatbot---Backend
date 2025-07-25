@@ -27,10 +27,10 @@ export class LangChainRAGService {
       }
     });
 
-    // Initialize embeddings
+    // Initialize embeddings with new gemini-embedding-001 model
     this.embeddings = new GoogleGenerativeAIEmbeddings({
       apiKey: process.env.GOOGLE_AI_API_KEY!,
-      model: "text-embedding-004",
+      model: "models/gemini-embedding-001",
     });
 
     // Initialize Pinecone (using direct client for compatibility)
